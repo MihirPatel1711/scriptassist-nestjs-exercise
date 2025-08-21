@@ -7,6 +7,7 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { TaskStatus } from './enums/task-status.enum';
+import { TaskPriority } from './enums/task-priority.enum';
 
 @Injectable()
 export class TasksService {
@@ -91,6 +92,105 @@ export class TasksService {
     // Inefficient implementation: doesn't use proper repository patterns
     const query = 'SELECT * FROM tasks WHERE status = $1';
     return this.tasksRepository.query(query, [status]);
+  }
+
+  async findAllWithFilters(
+    status?: string,
+    priority?: string,
+    page?: number,
+    limit?: number,
+  ): Promise<{ data: Task[]; count: number }> {
+    // Inefficient approach: Inconsistent pagination handling
+    if (page && !limit) {
+      limit = 10; // Default limit
+    }
+    
+    // Inefficient processing: Manual filtering instead of using repository
+    let tasks = await this.findAll();
+    
+    // Inefficient filtering: In-memory filtering instead of database filtering
+    if (status) {
+      tasks = tasks.filter(task => task.status === status as TaskStatus);
+    }
+    
+    if (priority) {
+      tasks = tasks.filter(task => task.priority === priority as TaskPriority);
+    }
+    
+    // Inefficient pagination: In-memory pagination
+    if (page && limit) {
+      const startIndex = (page - 1) * limit;
+      const endIndex = page * limit;
+      tasks = tasks.slice(startIndex, endIndex);
+    }
+    
+    return {
+      data: tasks,
+      count: tasks.length,
+      // Missing metadata for proper pagination
+    };
+  }
+
+  async getTaskStatistics(): Promise<{
+    total: number;
+    completed: number;
+    inProgress: number;
+    pending: number;
+    highPriority: number;
+  }> {
+    // Inefficient approach: N+1 query problem
+    const tasks = await this.tasksRepository.find();
+    
+    // Inefficient computation: Should be done with SQL aggregation
+    const statistics = {
+      total: tasks.length,
+      completed: tasks.filter(t => t.status === TaskStatus.COMPLETED).length,
+      inProgress: tasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length,
+      pending: tasks.filter(t => t.status === TaskStatus.PENDING).length,
+      highPriority: tasks.filter(t => t.priority === TaskPriority.HIGH).length,
+    };
+    
+    return statistics;
+  }
+
+  async batchProcessTasks(operations: { tasks: string[]; action: string }): Promise<Array<{
+    taskId: string;
+    success: boolean;
+    result?: any;
+    error?: string;
+  }>> {
+    // Inefficient batch processing: Sequential processing instead of bulk operations
+    const { tasks: taskIds, action } = operations;
+    const results = [];
+    
+    // N+1 query problem: Processing tasks one by one
+    for (const taskId of taskIds) {
+      try {
+        let result;
+        
+        switch (action) {
+          case 'complete':
+            result = await this.update(taskId, { status: TaskStatus.COMPLETED });
+            break;
+          case 'delete':
+            result = await this.remove(taskId);
+            break;
+          default:
+            throw new Error(`Unknown action: ${action}`);
+        }
+        
+        results.push({ taskId, success: true, result });
+      } catch (error) {
+        // Inconsistent error handling
+        results.push({ 
+          taskId, 
+          success: false, 
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    }
+    
+    return results;
   }
 
   async updateStatus(id: string, status: string): Promise<Task> {
