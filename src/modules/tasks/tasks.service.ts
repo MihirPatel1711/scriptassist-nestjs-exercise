@@ -8,6 +8,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { TaskStatus } from './enums/task-status.enum';
 import { TaskPriority } from './enums/task-priority.enum';
+import { CacheService } from '../../common/services/cache.service';
 
 @Injectable()
 export class TasksService {
@@ -16,6 +17,7 @@ export class TasksService {
     private tasksRepository: Repository<Task>,
     @InjectQueue('task-processing')
     private taskQueue: Queue,
+    private cacheService: CacheService,  // Add cache service
   ) {}
 
   async create(createTaskDto: CreateTaskDto): Promise<Task> {
@@ -42,9 +44,21 @@ export class TasksService {
     status?: string,
     priority?: string,
   ): Promise<{ data: Task[]; total: number; page: number; limit: number }> {
-    const pageNum = Number(page) || 1;
-    const limitNum = Number(limit) || 10;
-    const skip = (pageNum - 1) * limitNum;
+    // Try to get from cache first (high traffic operation)
+    const cacheKey = `tasks:${page}:${limit}:${status || 'all'}:${priority || 'all'}`;
+    const cached = await this.cacheService.get<{
+      data: Task[];
+      total: number;
+      page: number;
+      limit: number;
+    }>(cacheKey);
+    
+    if (cached) {
+      return cached;
+    }
+
+    // Single efficient method that handles pagination, filtering, and ordering
+    const skip = (page - 1) * limit;
     
     // Build query with optional filters
     const whereClause: any = {};
@@ -55,16 +69,21 @@ export class TasksService {
       where: whereClause,
       relations: ['user'],
       skip,
-      take: limitNum,
-      order: { createdAt: 'DESC' }, 
+      take: limit,
+      order: { createdAt: 'DESC' }, // Most recent tasks first
     });
 
-    return {
+    const result = {
       data: tasks,
       total,
-      page: pageNum,
-      limit: limitNum,
+      page,
+      limit,
     };
+
+    // Cache for 3 minutes (moderate changes, high traffic)
+    await this.cacheService.set(cacheKey, result, 180);
+    
+    return result;
   }
 
   async findOne(id: string): Promise<Task> {
@@ -89,6 +108,9 @@ export class TasksService {
       throw new NotFoundException(`Task not found`);
     }
     
+    // Invalidate related cache entries when data changes
+    await this.invalidateTaskCache();
+    
     // Get the updated task
     const updatedTask = await this.findOne(id);
     
@@ -109,11 +131,15 @@ export class TasksService {
   }
 
   async remove(id: string): Promise<void> {
+    // Efficient single database call
     const result = await this.tasksRepository.delete(id);
     
     if (result.affected === 0) {
       throw new NotFoundException(`Task not found`);
     }
+
+    // Invalidate related cache entries when data changes
+    await this.invalidateTaskCache();
   }
 
   async findByStatus(status: TaskStatus): Promise<Task[]> {
@@ -131,6 +157,20 @@ export class TasksService {
     pending: number;
     highPriority: number;
   }> {
+    // Try to get from cache first (expensive operation)
+    const cacheKey = 'stats:task-statistics';
+    const cached = await this.cacheService.get<{
+      total: number;
+      completed: number;
+      inProgress: number;
+      pending: number;
+      highPriority: number;
+    }>(cacheKey);
+    
+    if (cached) {
+      return cached;
+    }
+
     // Efficient approach: SQL aggregation with parallel queries
     const [total, completed, inProgress, pending, highPriority] = await Promise.all([
       this.tasksRepository.count(),
@@ -140,7 +180,12 @@ export class TasksService {
       this.tasksRepository.count({ where: { priority: TaskPriority.HIGH } }),
     ]);
     
-    return { total, completed, inProgress, pending, highPriority };
+    const statistics = { total, completed, inProgress, pending, highPriority };
+    
+    // Cache for 5 minutes (statistics don't change frequently)
+    await this.cacheService.set(cacheKey, statistics, 300);
+    
+    return statistics;
   }
 
   async batchProcessTasks(operations: { tasks: string[]; action: string }): Promise<Array<{
@@ -184,6 +229,9 @@ export class TasksService {
         }
       }
 
+      // Invalidate cache after batch operations
+      await this.invalidateTaskCache();
+
       // Return success for all tasks
       return taskIds.map(taskId => ({ 
         taskId, 
@@ -209,7 +257,36 @@ export class TasksService {
       throw new NotFoundException(`Task not found`);
     }
     
+    // Invalidate related cache entries when data changes
+    await this.invalidateTaskCache();
+    
     // Return the updated task
     return this.findOne(id);
+  }
+
+  // Cache invalidation helper
+  private async invalidateTaskCache(): Promise<void> {
+    try {
+      // Clear statistics cache
+      await this.cacheService.delete('stats:task-statistics');
+      
+      // Clear all task-related cache entries
+      // Get all cache keys and filter for task-related ones
+      const stats = this.cacheService.getStats();
+      
+      // Clear all paginated task caches (any page, any limit, any filters)
+      for (const key of stats.keys) {
+        if (key.startsWith('tasks:') || key.startsWith('stats:')) {
+          await this.cacheService.delete(key);
+        }
+      }
+      
+      // Also clear any other potential task cache patterns
+      await this.cacheService.delete('tasks:*');
+      await this.cacheService.delete('stats:*');
+      
+    } catch (error) {
+      console.error('Cache invalidation error:', error);
+    }
   }
 }
