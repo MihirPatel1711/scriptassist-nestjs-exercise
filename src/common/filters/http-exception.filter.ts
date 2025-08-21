@@ -59,14 +59,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     // Add retry information for server errors
     if (status >= 500) {
-      baseResponse.retryAfter = 30; // Suggest retry after 30 seconds
+      baseResponse.retryAfter = 30;
     }
 
     return baseResponse;
   }
 
   private getSafeErrorMessage(exception: HttpException, status: number): string {
-    // Don't expose internal error details for server errors
     if (status >= 500) {
       return 'Internal server error';
     }
