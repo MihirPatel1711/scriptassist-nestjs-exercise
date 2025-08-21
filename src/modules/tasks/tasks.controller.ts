@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Ht
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { TaskFilterDto } from './dto/task-filter.dto';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
@@ -27,17 +28,13 @@ export class TasksController {
   @Get()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Find all tasks with pagination and optional filtering' })
-  @ApiQuery({ name: 'page', required: false, description: 'Page number (default: 1)' })
-  @ApiQuery({ name: 'limit', required: false, description: 'Items per page (default: 10)' })
-  @ApiQuery({ name: 'status', required: false, description: 'Filter by task status' })
-  @ApiQuery({ name: 'priority', required: false, description: 'Filter by task priority' })
-  async findAll(
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
-    @Query('status') status?: string,
-    @Query('priority') priority?: string,
-  ) {
-    return this.tasksService.findAll(page, limit, status, priority);
+  async findAll(@Query() filterDto: TaskFilterDto) {
+    return this.tasksService.findAll(
+      filterDto.page,
+      filterDto.limit,
+      filterDto.status,
+      filterDto.priority
+    );
   }
 
   @Get('stats')
