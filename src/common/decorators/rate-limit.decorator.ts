@@ -8,7 +8,6 @@ export interface RateLimitOptions {
 }
 
 export const RateLimit = (options: RateLimitOptions) => {
-  // Problem: This decorator doesn't actually enforce rate limiting
-  // It only sets metadata that is never used by the guard
+  // Properly set metadata that the guard can read
   return SetMetadata(RATE_LIMIT_KEY, options);
 }; 

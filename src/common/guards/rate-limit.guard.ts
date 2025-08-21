@@ -2,12 +2,8 @@ import { Injectable, CanActivate, ExecutionContext, HttpException, HttpStatus } 
 import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
 
-// Inefficient in-memory storage for rate limiting
-// Problems:
-// 1. Not distributed - breaks in multi-instance deployments
-// 2. Memory leak - no cleanup mechanism for old entries
-// 3. No persistence - resets on application restart
-// 4. Inefficient data structure for lookups in large datasets
+// Simple in-memory storage for rate limiting
+// Note: For production, consider using Redis or similar distributed storage
 const requestRecords: Record<string, { count: number, timestamp: number }[]> = {};
 
 @Injectable()
@@ -20,57 +16,63 @@ export class RateLimitGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const ip = request.ip;
     
-    // Inefficient: Uses IP address directly without any hashing or anonymization
-    // Security risk: Storing raw IPs without compliance consideration
-    return this.handleRateLimit(ip);
+    // Get rate limit options from decorator metadata
+    const rateLimitOptions = this.reflector.get<{ limit: number; windowMs: number }>(
+      'rate_limit',
+      context.getHandler(),
+    ) || { limit: 100, windowMs: 60000 }; // Default: 100 requests per minute
+    
+    return this.handleRateLimit(ip, rateLimitOptions);
   }
 
-  private handleRateLimit(ip: string): boolean {
+  private handleRateLimit(ip: string, options: { limit: number; windowMs: number }): boolean {
     const now = Date.now();
-    const windowMs = 60 * 1000; // 1 minute
-    const maxRequests = 100; // Max 100 requests per minute
+    const { limit, windowMs } = options;
     
-    // Inefficient: Creates a new array for each IP if it doesn't exist
+    // Initialize array for new IPs
     if (!requestRecords[ip]) {
       requestRecords[ip] = [];
     }
     
-    // Inefficient: Filter operation on potentially large array
-    // Every request causes a full array scan
+    // Clean old records outside the window
     const windowStart = now - windowMs;
     requestRecords[ip] = requestRecords[ip].filter(record => record.timestamp > windowStart);
     
     // Check if rate limit is exceeded
-    if (requestRecords[ip].length >= maxRequests) {
-      // Inefficient error handling: Too verbose, exposes internal details
+    if (requestRecords[ip].length >= limit) {
       throw new HttpException({
         status: HttpStatus.TOO_MANY_REQUESTS,
         error: 'Rate limit exceeded',
-        message: `You have exceeded the ${maxRequests} requests per ${windowMs / 1000} seconds limit.`,
-        limit: maxRequests,
+        message: `Rate limit exceeded. Maximum ${limit} requests per ${windowMs / 1000} seconds.`,
+        limit,
         current: requestRecords[ip].length,
-        ip: ip, // Exposing the IP in the response is a security risk
         remaining: 0,
-        nextValidRequestTime: requestRecords[ip][0].timestamp + windowMs,
+        retryAfter: Math.ceil(windowMs / 1000),
       }, HttpStatus.TOO_MANY_REQUESTS);
     }
     
-    // Inefficient: Potential race condition in concurrent environments
-    // No locking mechanism when updating shared state
+    // Add current request
     requestRecords[ip].push({ count: 1, timestamp: now });
     
-    // Inefficient: No periodic cleanup task, memory usage grows indefinitely
-    // Dead entries for inactive IPs are never removed
+    // Cleanup old records periodically (every 1000 requests to avoid performance impact)
+    if (Math.random() < 0.001) {
+      this.cleanupOldRecords();
+    }
     
     return true;
   }
-}
 
-// Decorator to apply rate limiting to controllers or routes
-export const RateLimit = (limit: number, windowMs: number) => {
-  // Inefficient: Decorator doesn't actually use the parameters
-  // This is misleading and causes confusion
-  return (target: any, key?: string, descriptor?: any) => {
-    return descriptor;
-  };
-}; 
+  private cleanupOldRecords(): void {
+    const now = Date.now();
+    const maxAge = 5 * 60 * 1000; // 5 minutes
+    
+    Object.keys(requestRecords).forEach(ip => {
+      requestRecords[ip] = requestRecords[ip].filter(record => record.timestamp > now - maxAge);
+      
+      // Remove IP if no records remain
+      if (requestRecords[ip].length === 0) {
+        delete requestRecords[ip];
+      }
+    });
+  }
+} 
