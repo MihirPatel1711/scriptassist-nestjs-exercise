@@ -1,4 +1,4 @@
-import { ExceptionFilter, Catch, ArgumentsHost, HttpException, Logger } from '@nestjs/common';
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException, Logger, HttpStatus } from '@nestjs/common';
 import { Request, Response } from 'express';
 
 @Catch(HttpException)
@@ -12,25 +12,66 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const status = exception.getStatus();
     const exceptionResponse = exception.getResponse();
 
-    // TODO: Implement comprehensive error handling
-    // This filter should:
     // 1. Log errors appropriately based on their severity
+    this.logError(exception, request, status);
+
     // 2. Format error responses in a consistent way
+    const errorResponse = this.formatErrorResponse(exception, request, status);
+
     // 3. Include relevant error details without exposing sensitive information
     // 4. Handle different types of errors with appropriate status codes
+    response.status(status).json(errorResponse);
+  }
 
-    this.logger.error(
-      `HTTP Exception: ${exception.message}`,
-      exception.stack,
+  private logError(exception: HttpException, request: Request, status: number): void {
+    const logLevel = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'log';
+    
+    this.logger[logLevel](
+      `HTTP ${status} - ${request.method} ${request.url}`,
+      {
+        status,
+        method: request.method,
+        url: request.url,
+        userAgent: request.get('User-Agent'),
+        ip: request.ip,
+        userId: (request.user as any)?.id || 'anonymous',
+        timestamp: new Date().toISOString(),
+        error: exception.message,
+      }
     );
+  }
 
-    // Basic implementation (to be enhanced by candidates)
-    response.status(status).json({
+  private formatErrorResponse(exception: HttpException, request: Request, status: number): any {
+    const baseResponse: any = {
       success: false,
       statusCode: status,
-      message: exception.message,
+      message: this.getSafeErrorMessage(exception, status),
       path: request.url,
       timestamp: new Date().toISOString(),
-    });
+      method: request.method,
+    };
+
+    // Add validation errors if available
+    const exceptionResponse = exception.getResponse() as any;
+    if (status === HttpStatus.BAD_REQUEST && exceptionResponse.message) {
+      baseResponse.errors = exceptionResponse.message;
+    }
+
+    // Add retry information for server errors
+    if (status >= 500) {
+      baseResponse.retryAfter = 30; // Suggest retry after 30 seconds
+    }
+
+    return baseResponse;
+  }
+
+  private getSafeErrorMessage(exception: HttpException, status: number): string {
+    // Don't expose internal error details for server errors
+    if (status >= 500) {
+      return 'Internal server error';
+    }
+
+    // For client errors, just return the original message
+    return exception.message || 'An error occurred';
   }
 } 
