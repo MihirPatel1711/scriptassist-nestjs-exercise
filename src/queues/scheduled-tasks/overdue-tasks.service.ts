@@ -18,31 +18,39 @@ export class OverdueTasksService {
     private tasksRepository: Repository<Task>,
   ) {}
 
-  // TODO: Implement the overdue tasks checker
-  // This method should run every hour and check for overdue tasks
   @Cron(CronExpression.EVERY_HOUR)
   async checkOverdueTasks() {
     this.logger.debug('Checking for overdue tasks...');
     
-    // TODO: Implement overdue tasks checking logic
-    // 1. Find all tasks that are overdue (due date is in the past)
-    // 2. Add them to the task processing queue
-    // 3. Log the number of overdue tasks found
-    
-    // Example implementation (incomplete - to be implemented by candidates)
-    const now = new Date();
-    const overdueTasks = await this.tasksRepository.find({
-      where: {
-        dueDate: LessThan(now),
-        status: TaskStatus.PENDING,
-      },
-    });
-    
-    this.logger.log(`Found ${overdueTasks.length} overdue tasks`);
-    
-    // Add tasks to the queue to be processed
-    // TODO: Implement adding tasks to the queue
-    
-    this.logger.debug('Overdue tasks check completed');
+    try {
+      // 1. Find all tasks that are overdue (due date is in the past)
+      const now = new Date();
+      const overdueTasks = await this.tasksRepository.find({
+        where: {
+          dueDate: LessThan(now),
+          status: TaskStatus.PENDING,
+        },
+      });
+      
+      this.logger.log(`Found ${overdueTasks.length} overdue tasks`);
+      
+      // 2. Add them to the task processing queue
+      for (const task of overdueTasks) {
+        try {
+          await this.taskQueue.add('overdue-tasks-notification', {
+            taskId: task.id,
+            dueDate: task.dueDate,
+            userId: task.userId,
+          });
+          this.logger.debug(`Added overdue task ${task.id} to queue`);
+        } catch (error) {
+          this.logger.error(`Failed to add overdue task ${task.id} to queue: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+      }
+      
+      this.logger.debug('Overdue tasks check completed');
+    } catch (error) {
+      this.logger.error(`Error checking overdue tasks: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 } 

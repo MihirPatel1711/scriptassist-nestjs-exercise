@@ -24,15 +24,31 @@ export class TasksService {
     const task = this.tasksRepository.create(createTaskDto);
     const savedTask = await this.tasksRepository.save(task);
 
-    try {
-      // Add to queue and wait for confirmation
-      await this.taskQueue.add('task-status-update', {
-        taskId: savedTask.id,
-        status: savedTask.status,
-      });
-    } catch (error) {
-      // Log the error but don't fail the task creation
-      console.error('Failed to add task to queue:', error);
+    // Check if task is overdue and update status immediately
+    if (savedTask.dueDate && savedTask.dueDate < new Date()) {
+      savedTask.status = TaskStatus.IN_PROGRESS;
+      await this.tasksRepository.save(savedTask);
+      
+      // Add overdue task to queue for notification
+      try {
+        await this.taskQueue.add('overdue-tasks-notification', {
+          taskId: savedTask.id,
+          dueDate: savedTask.dueDate,
+          userId: savedTask.userId,
+        });
+      } catch (error) {
+        console.error('Failed to add overdue task to queue:', error);
+      }
+    } else {
+      // Add normal task to queue
+      try {
+        await this.taskQueue.add('task-status-update', {
+          taskId: savedTask.id,
+          status: savedTask.status,
+        });
+      } catch (error) {
+        console.error('Failed to add task to queue:', error);
+      }
     }
 
     return savedTask;
