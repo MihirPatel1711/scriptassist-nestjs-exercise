@@ -430,8 +430,6 @@ await this.cacheService.set(cacheKey, statistics, 300); // 5 minutes
 
 ---
 
-## 🚨 **QUEUE SERVICES PROBLEMS & SOLUTIONS**
-
 ### **Problem 18: OverdueTasksService Not Working**
 **Description:** The OverdueTasksService was completely non-functional with only TODO comments and incomplete implementation. It couldn't:
 - Find overdue tasks properly
@@ -513,8 +511,6 @@ private async handleOverdueTasks(job: Job) {
 ```
 
 ---
-
-## 🚨 **TESTING PROBLEMS & SOLUTIONS**
 
 ### **Problem 20: Missing End-to-End Tests for Overdue Tasks**
 **Description:** The existing test file only had a basic placeholder test with no actual coverage of the overdue tasks functionality we implemented. Without proper e2e tests:
