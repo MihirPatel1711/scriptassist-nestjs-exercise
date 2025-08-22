@@ -5,8 +5,6 @@ This document outlines the problems identified and solutions implemented in the 
 
 ---
 
-## 🚨 **TASK CONTROLLER PROBLEMS & SOLUTIONS**
-
 ### **Problem 1: JWT Authentication Not Working**
 **Issue:** JWT authentication guard was not properly implemented or imported.
 ```typescript
@@ -139,8 +137,6 @@ async remove(@Param('id') id: string) {
 ```
 
 ---
-
-## 🚨 **TASK SERVICE PROBLEMS & SOLUTIONS**
 
 ### **Problem 6: Queue Error Handling**
 **Issue:** Tasks were added to the queue without waiting for confirmation or handling errors.
